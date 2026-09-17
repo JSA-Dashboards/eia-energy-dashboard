@@ -143,14 +143,17 @@ st.markdown(f"""
   }}
   .note-text {{ color: {DM_MUTED}; font-size: 0.78rem; }}
 
-  /* JSA watermark on charts and snapshot tables */
+  /* JSA watermark on charts and snapshot tables. Plotly draws an opaque
+     background rect in its own SVG, which paints over anything placed
+     behind it (a ::before at z-index:0) — so, same as the tables below,
+     the watermark has to sit ON TOP via ::after at low opacity rather
+     than behind the chart. */
   [data-testid="stPlotlyChart"] {{ position: relative; }}
-  [data-testid="stPlotlyChart"]::before {{
+  [data-testid="stPlotlyChart"]::after {{
       content: ""; position: absolute; inset: 0;
       background: url('{WATERMARK}') center 50% / 28% auto no-repeat;
-      opacity: 0.12; pointer-events: none; z-index: 0;
+      opacity: 0.12; pointer-events: none; z-index: 5;
   }}
-  [data-testid="stPlotlyChart"] .main-svg {{ position: relative; z-index: 1; }}
   table[id^="snap_"] {{ position: relative; }}
   table[id^="snap_"]::after {{
       content: ""; position: absolute; inset: 0;
