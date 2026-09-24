@@ -1463,3 +1463,16 @@ st.markdown(
     f"&nbsp;|&nbsp; John Stewart & Associates</div>",
     unsafe_allow_html=True,
 )
+st.markdown(
+    f"<div class='note-text' style='margin-top:8px;font-size:0.7rem;line-height:1.4'>"
+    f"Trading commodity futures, options on futures, cash commodities and over-the-counter "
+    f"derivative products involve substantial risk of loss and may not be suitable for all "
+    f"investors. John Stewart & Associates, Inc. does not accept orders to buy or sell by "
+    f"e-mail. The information contained in this message has been obtained from sources "
+    f"believed to be reliable, but is not guaranteed as to its accuracy or completeness. "
+    f"Opinions are solely those of the author, subject to change at any time, and do not "
+    f"constitute a solicitation to buy or sell commodity futures, options, or "
+    f"over-the-counter derivative products. Past performance is not indicative of future "
+    f"results. © John Stewart & Associates, Inc. {pd.Timestamp.today().year}.</div>",
+    unsafe_allow_html=True,
+)
