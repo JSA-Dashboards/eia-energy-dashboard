@@ -28,6 +28,7 @@ rc=0
 {
     echo "=== ethanol ETL start $(date -Is) ==="
     git pull --quiet
+    set -a; source .env; set +a
     "$VENV/bin/python" deploy/run_ethanol_etl.py
     rc=$?
     echo "=== ethanol ETL finished $(date -Is) rc=$rc ==="
