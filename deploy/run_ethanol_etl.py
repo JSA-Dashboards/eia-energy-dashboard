@@ -110,13 +110,26 @@ def merge_rows(conn, route: str, rows: list[dict]):
         print(f"  {route}: 0 rows returned, nothing to merge")
         return
     fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    # De-dupe on the MERGE key before staging: EIA's API only sorts by period,
+    # so with >5000 matching rows (this route has ~15k) pagination can return
+    # the same (period, duoarea, product, process) row twice across a page
+    # boundary when many rows share a period and the tie-break order isn't
+    # stable between calls. Snowflake's MERGE rejects a source with duplicate
+    # keys outright ("Duplicate row detected during DML action"), so last-one
+    # wins here rather than trusting the API to never repeat a row.
+    deduped = {}
+    for r in rows:
+        key = (route, r["period"], r["duoarea"], r["product"], r["process"])
+        deduped[key] = r
     staged = [
         (route, r["period"], r["duoarea"], r.get("area-name"), r["product"],
          r.get("product-name"), r["process"], r.get("process-name"),
          r.get("series"), float(r["value"]) if r.get("value") not in (None, "") else None,
          r.get("units"), fetched_at)
-        for r in rows
+        for r in deduped.values()
     ]
+    if len(staged) < len(rows):
+        print(f"  {route}: deduped {len(rows)} -> {len(staged)} rows before merge")
     cur = conn.cursor()
     cur.execute("""
         CREATE OR REPLACE TEMPORARY TABLE _stage (
