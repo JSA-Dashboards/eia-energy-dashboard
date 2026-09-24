@@ -20,6 +20,8 @@ import streamlit as st
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from eia_ethanol_cache_client import fetch_ethanol_cached, cache_freshness as ethanol_cache_freshness
+
 # ── Theme (light, matching the other JSA dashboards) ──────────────────────────
 DM_BG        = "#f7f9fa"
 DM_SURFACE   = "#ffffff"
@@ -388,8 +390,9 @@ with st.sidebar:
     if st.button("🔄 Refresh Data Now", width='stretch'):
         eia_get.clear()
         st.rerun()
-    st.caption("Forces a fresh pull from EIA, bypassing the 30-min cache — use this after a "
-               "new report has published.")
+    st.caption("Forces a fresh pull from EIA, bypassing the 30-min cache, for natural gas / "
+               "feedstocks / capacity. Ethanol data comes from the Droplet's own scheduled "
+               "pull instead (see the 'as of' line below) — this button doesn't affect it.")
     st.markdown("---")
     LOOKBACK_OPTIONS = {
         "Since Jan 2021": "2021-01-01",
@@ -397,11 +400,11 @@ with st.sidebar:
     }
     lookback = st.selectbox("Chart lookback", list(LOOKBACK_OPTIONS.keys()), index=0)
     st.markdown("---")
-    st.markdown(
-        f"<div class='note-text'>Source: U.S. Energy Information Administration<br>"
-        f"api.eia.gov/v2 — cached 30 min</div>",
-        unsafe_allow_html=True,
-    )
+    _ethanol_freshness = ethanol_cache_freshness()
+    _source_note = "Source: U.S. Energy Information Administration<br>api.eia.gov/v2 — cached 30 min"
+    if _ethanol_freshness:
+        _source_note += f"<br>Ethanol data as of {_ethanol_freshness} UTC (Droplet ETL)"
+    st.markdown(f"<div class='note-text'>{_source_note}</div>", unsafe_allow_html=True)
 
 start_date = LOOKBACK_OPTIONS[lookback]
 if start_date is None and lookback != "Max":
@@ -421,17 +424,23 @@ if section == "Weekly EIA Report":
     PADD_MOVE_CODES = {"R10": "R10-Z00", "R20": "R20-Z00", "R30": "R30-Z00",
                         "R40": "R40-Z00", "R50": "R50-Z00"}
 
-    eth_prod_padd = eia_get("petroleum/sum/sndw",
-                             {"duoarea": PADD_CODES + ["NUS"], "product": "EPOOXE", "process": "YOP"})
-    eth_stock_padd = eia_get("petroleum/sum/sndw",
-                              {"duoarea": PADD_CODES + ["NUS"], "product": "EPOOXE", "process": "SAE"})
-    eth_blend_padd = eia_get("petroleum/sum/sndw",
-                              {"duoarea": PADD_CODES + ["NUS"], "product": "EPOOXE", "process": "YIR"})
-    eth_imports_padd = eia_get("petroleum/move/wkly",
-                                {"duoarea": list(PADD_MOVE_CODES.values()) + ["NUS-Z00"],
-                                 "product": "EPOOXE", "process": "IM0"})
-    eth_exports_nat = eia_get("petroleum/move/wkly",
-                               {"duoarea": "NUS-Z00", "product": "EPOOXE", "process": "EEX"})
+    _sndw_padd_facets = {"duoarea": PADD_CODES + ["NUS"], "product": "EPOOXE"}
+    eth_prod_padd = fetch_ethanol_cached(
+        "petroleum/sum/sndw", {**_sndw_padd_facets, "process": "YOP"},
+        lambda: eia_get("petroleum/sum/sndw", {**_sndw_padd_facets, "process": "YOP"}))
+    eth_stock_padd = fetch_ethanol_cached(
+        "petroleum/sum/sndw", {**_sndw_padd_facets, "process": "SAE"},
+        lambda: eia_get("petroleum/sum/sndw", {**_sndw_padd_facets, "process": "SAE"}))
+    eth_blend_padd = fetch_ethanol_cached(
+        "petroleum/sum/sndw", {**_sndw_padd_facets, "process": "YIR"},
+        lambda: eia_get("petroleum/sum/sndw", {**_sndw_padd_facets, "process": "YIR"}))
+    _move_padd_facets = {"duoarea": list(PADD_MOVE_CODES.values()) + ["NUS-Z00"], "product": "EPOOXE"}
+    eth_imports_padd = fetch_ethanol_cached(
+        "petroleum/move/wkly", {**_move_padd_facets, "process": "IM0"},
+        lambda: eia_get("petroleum/move/wkly", {**_move_padd_facets, "process": "IM0"}))
+    eth_exports_nat = fetch_ethanol_cached(
+        "petroleum/move/wkly", {"duoarea": "NUS-Z00", "product": "EPOOXE", "process": "EEX"},
+        lambda: eia_get("petroleum/move/wkly", {"duoarea": "NUS-Z00", "product": "EPOOXE", "process": "EEX"}))
     gas_demand = eia_get("petroleum/cons/wpsup", {"duoarea": "NUS", "product": "EPM0F"})
 
     crude_stock = eia_get("petroleum/sum/sndw", {"duoarea": "NUS", "product": "EPC0", "process": "SAX"})
@@ -947,12 +956,24 @@ elif section == "Natural Gas":
 # ETHANOL & BIOFUELS
 # ══════════════════════════════════════════════════════════════════════════════
 elif section == "Ethanol (Weekly)":
-    eth_weekly = eia_get("petroleum/sum/sndw",
-                          {"duoarea": "NUS", "product": "EPOOXE",
-                           "process": ["YOP", "SAE", "YIR"]}, start=start_date)
-    eth_padd = eia_get("petroleum/pnp/wprode", {"product": "EPOOXE"}, start=start_date)
-    eth_exports = eia_get("petroleum/move/wkly", {"duoarea": "NUS-Z00", "product": "EPOOXE", "process": "EEX"},
-                           start=start_date)
+    def _since(df):
+        """Apply the sidebar's chart lookback after a full-history cache read
+        (the cache itself always holds full history, same as feedstocks_hist)."""
+        if df.empty or not start_date:
+            return df
+        return df[df["period"] >= start_date].reset_index(drop=True)
+
+    _weekly_facets = {"duoarea": "NUS", "product": "EPOOXE", "process": ["YOP", "SAE", "YIR"]}
+    eth_weekly = _since(fetch_ethanol_cached(
+        "petroleum/sum/sndw", _weekly_facets,
+        lambda: eia_get("petroleum/sum/sndw", _weekly_facets, start=start_date)))
+    eth_padd = _since(fetch_ethanol_cached(
+        "petroleum/pnp/wprode", {"product": "EPOOXE"},
+        lambda: eia_get("petroleum/pnp/wprode", {"product": "EPOOXE"}, start=start_date)))
+    _exports_facets = {"duoarea": "NUS-Z00", "product": "EPOOXE", "process": "EEX"}
+    eth_exports = _since(fetch_ethanol_cached(
+        "petroleum/move/wkly", _exports_facets,
+        lambda: eia_get("petroleum/move/wkly", _exports_facets, start=start_date)))
 
     prod = eth_weekly[eth_weekly["process"] == "YOP"] if not eth_weekly.empty else pd.DataFrame()
     stocks = eth_weekly[eth_weekly["process"] == "SAE"] if not eth_weekly.empty else pd.DataFrame()
