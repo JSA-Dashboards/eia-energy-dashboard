@@ -465,7 +465,9 @@ if section == "Weekly EIA Report":
     cushing_stock = eia_get("petroleum/sum/sndw", {"duoarea": "YCUOK", "product": "EPC0", "process": "SAX"})
     gasoline_stock = eia_get("petroleum/sum/sndw", {"duoarea": "NUS", "product": "EPM0", "process": "SAE"})
     distillate_stock = eia_get("petroleum/sum/sndw", {"duoarea": "NUS", "product": "EPD0", "process": "SAE"})
-    propane_stock = eia_get("petroleum/sum/sndw", {"duoarea": "NUS", "product": "EPLLPZ", "process": "SAE"})
+    # SAXP, not SAE: EIA re-coded the weekly propane stocks (excluding propylene at terminals) in April 2020,
+    # and the old SAE series ends 2020-04-03 (it showed a 2020 figure as this week's until 2026-10-14).
+    propane_stock = eia_get("petroleum/sum/sndw", {"duoarea": "NUS", "product": "EPLLPZ", "process": "SAXP"})
 
     crude_input = eia_get("petroleum/pnp/wiup", {"duoarea": "NUS", "product": "EPC0", "process": "YIY"})
     refinery_capacity = eia_get("petroleum/pnp/wiup", {"duoarea": "NUS", "process": "YRL"})
@@ -748,6 +750,9 @@ if section == "Weekly EIA Report":
         "Distillate Fuel Oil": wow(distillate_stock),
         "Propane/Propylene": wow(propane_stock),
     }
+    # a series EIA has stopped publishing must not pass for this week's number: skip it and say so
+    stocks_week = max((r[0] for r in stocks_rows.values() if r[0] is not None), default=None)
+    stale = []
     rows_html = (f"<tr style='color:{DM_MUTED};font-size:0.72rem;text-transform:uppercase'>"
                 f"<td style='padding:4px 10px'>Million Barrels</td>"
                 f"<td style='padding:4px 10px;text-align:right'>This Week</td>"
@@ -756,6 +761,9 @@ if section == "Weekly EIA Report":
                 f"<td style='padding:4px 10px;text-align:right'>vs 5-Yr Avg</td></tr>")
     for label, (per, tv, lv, d) in stocks_rows.items():
         if tv is None:
+            continue
+        if per < stocks_week:
+            stale.append(label)
             continue
         df_map = {"Comm. Crude Oil": crude_stock, "Cushing, OK": cushing_stock,
                   "Total Motor Gasoline": gasoline_stock, "Distillate Fuel Oil": distillate_stock,
@@ -773,12 +781,14 @@ if section == "Weekly EIA Report":
         unsafe_allow_html=True,
     )
     _snap_toolbar("snap_petro_stocks", "EIA Petroleum Stocks")
+    if stale:
+        st.caption(f"Not shown: {', '.join(stale)} — EIA's newest figure for it is older than this week's report.")
 
     petro_narrative_parts = []
     for label, df in [("crude oil", crude_stock), ("total motor gasoline", gasoline_stock),
                        ("distillate fuel", distillate_stock), ("propane/propylene", propane_stock)]:
         per, tv, lv, d = wow(df)
-        if tv is None:
+        if tv is None or per < stocks_week:
             continue
         pct5 = pct_vs_5yr_avg(df, tv, per)
         clause = (f"{label.capitalize()} inventories {'increased' if d >= 0 else 'decreased'} by "
