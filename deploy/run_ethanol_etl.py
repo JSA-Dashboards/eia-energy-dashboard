@@ -57,7 +57,10 @@ def fetch_route(session: requests.Session, route: str, facets: dict) -> list[dic
     length, offset, rows = 5000, 0, []
     while True:
         params = params_base + [("offset", offset), ("length", length)]
-        r = session.get(f"{BASE_URL}/{route}/data/", params=params, timeout=30)
+        # api.eia.gov answers a query in 5-30 s whatever its size and now and then takes much longer, so a
+        # 30 s read timeout failed the 10:00 run on 2026-10-14. Wait up to 150 s for the answer; don't
+        # retry on a timeout (a retry restarts the query the server is still working on).
+        r = session.get(f"{BASE_URL}/{route}/data/", params=params, timeout=(10, 150))
         r.raise_for_status()
         js = r.json()
         data = js.get("response", {}).get("data", [])
